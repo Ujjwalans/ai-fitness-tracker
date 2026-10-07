@@ -7,7 +7,7 @@ import { analyzeStylePhoto } from "../controllers/styleAdvisorController.js";
 
 const router = express.Router();
 
-const uploadDir = path.join(process.cwd(), "uploads", "style");
+const uploadDir = path.join("/tmp", "uploads", "style");
 
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });

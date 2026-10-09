@@ -1,13 +1,13 @@
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "https://router.huggingface.co/v1",
-  apiKey: process.env.HF_TOKEN,
+   baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.LLM_API_KEY,
 });
 
 // KEEP THIS MODEL
 const MODEL =
-  process.env.HF_MODEL || "openai/gpt-oss-20b:groq";
+   process.env.LLM_MODEL || "openrouter/free";
 
 
 // ======================================================
@@ -288,7 +288,7 @@ function parseAIJson(text) {
 
 export async function generateWellnessPlan(profile) {
 
-  if (!process.env.HF_TOKEN) {
+  if (!process.env.LLM_API_KEY) {
 
     console.log("HF_TOKEN not found.");
     console.log("Using mock wellness plan.");
@@ -404,7 +404,7 @@ export async function chatWithAssistant(
   context = {}
 ) {
 
-  if (!process.env.HF_TOKEN) {
+  if (!process.env.LLM_API_KEY) {
 
     return {
       reply:
@@ -876,7 +876,7 @@ Do not simply repeat the user's existing meals.
 // GENERIC AI REQUEST HELPER
 // ======================================================
 async function askAI(messages, options = {}) {
-  if (!process.env.HF_TOKEN) {
+  if (!process.env.LLM_API_KEY) {
     throw new Error("HF_TOKEN is not configured");
   }
 

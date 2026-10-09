@@ -1,20 +1,19 @@
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "https://router.huggingface.co/v1",
-  apiKey: process.env.HF_TOKEN,
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.LLM_API_KEY,
 });
 
 const MODEL =
-  process.env.HF_MODEL || "openai/gpt-oss-20b:groq";
-
+  process.env.LLM_MODEL || "openrouter/free";
 export async function generateStyleRecommendations({
   profile,
   visualAnalysis,
 }) {
-  if (!process.env.HF_TOKEN) {
-    throw new Error("HF_TOKEN is not configured.");
-  }
+  if (!process.env.LLM_API_KEY) {
+  throw new Error("LLM_API_KEY is not configured.");
+}
 
   const prompt = `
 You are an expert personal fashion and styling assistant.

@@ -1,13 +1,15 @@
+
 import fs from "fs/promises";
 import OpenAI from "openai";
 
 const visionClient = new OpenAI({
-  baseURL: "https://router.huggingface.co/v1",
-  apiKey: process.env.HF_TOKEN,
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.LLM_API_KEY,
 });
 
 const VISION_MODEL =
-  process.env.STYLE_VISION_MODEL || "zai-org/GLM-4.5V";
+  process.env.STYLE_VISION_MODEL ||
+  "google/gemma-4-26b-a4b-it:free";
 
 function getMimeType(filePath) {
   const extension = filePath.toLowerCase().split(".").pop();
@@ -23,19 +25,16 @@ function getMimeType(filePath) {
 }
 
 export async function analyzeStyleImage(filePath) {
-  if (!process.env.HF_TOKEN) {
-    throw new Error("HF_TOKEN is not configured.");
+  if (!process.env.LLM_API_KEY) {
+    throw new Error("LLM_API_KEY is not configured.");
   }
 
   console.log("Starting Style Vision Analysis...");
   console.log("Vision model:", VISION_MODEL);
 
   const imageBuffer = await fs.readFile(filePath);
-
   const mimeType = getMimeType(filePath);
-
   const base64Image = imageBuffer.toString("base64");
-
   const imageDataUrl = `data:${mimeType};base64,${base64Image}`;
 
   const prompt = `
@@ -70,7 +69,7 @@ Analyze these areas:
 14. Suitable footwear
 15. Complete outfit ideas
 
-Return ONLY valid JSON.
+Return ONLY valid JSON. Do not use Markdown fences or explanatory text.
 
 Use exactly this structure:
 
@@ -113,117 +112,126 @@ Use exactly this structure:
 }
 `;
 
-  const completion =
-    await visionClient.chat.completions.create({
-      model: VISION_MODEL,
-
-      messages: [
-        {
-          role: "user",
-
-          content: [
-            {
-              type: "text",
-              text: prompt,
-            },
-
-            {
-              type: "image_url",
-
-              image_url: {
-                url: imageDataUrl,
+  try {
+    const completion =
+      await visionClient.chat.completions.create({
+        model: VISION_MODEL,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: prompt,
               },
-            },
-          ],
-        },
-      ],
+              {
+                type: "image_url",
+                image_url: {
+                  url: imageDataUrl,
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0.2,
+        max_tokens: 3000,
+      });
 
-      temperature: 0.2,
+    const choice = completion.choices?.[0];
 
-      max_tokens: 3000,
+    if (!choice) {
+      throw new Error("Vision AI returned no response.");
+    }
+
+    let content = choice.message?.content;
+
+    if (Array.isArray(content)) {
+      content = content
+        .map((item) => {
+          if (typeof item === "string") {
+            return item;
+          }
+
+          return item?.text || item?.content || "";
+        })
+        .join("");
+    }
+
+    if (typeof content !== "string" || !content.trim()) {
+      console.error("Vision AI returned empty content:", choice);
+
+      throw new Error("Vision AI returned an empty response.");
+    }
+
+    console.log("Vision AI raw response received.");
+
+    return parseVisionResponse(content);
+  } catch (error) {
+    console.error("Style vision request failed:", {
+      status: error.status,
+      message: error.message,
+      model: VISION_MODEL,
     });
 
-  const choice = completion.choices?.[0];
+    // Keep useful diagnostic information for the controller,
+    // without exposing the API key or full request payload.
+    if (error.status === 400) {
+      throw new Error(
+        `Vision model request rejected (400). Check STYLE_VISION_MODEL and image input support. Details: ${error.message}`
+      );
+    }
 
-  if (!choice) {
-    console.error(
-      "Vision AI returned no choices:",
-      completion
-    );
+    if (error.status === 401 || error.status === 403) {
+      throw new Error(
+        `OpenRouter authentication or permission error (${error.status}). Check LLM_API_KEY and model access.`
+      );
+    }
 
-    throw new Error(
-      "Vision AI returned no response."
-    );
+    if (error.status === 429) {
+      throw new Error(
+        "Vision model rate limit or quota exceeded. Try again later or check your OpenRouter limits."
+      );
+    }
+
+    throw error;
   }
-
-  let content = choice.message?.content;
-
-  if (Array.isArray(content)) {
-    content = content
-      .map((item) => {
-        if (typeof item === "string") {
-          return item;
-        }
-
-        return item?.text || item?.content || "";
-      })
-      .join("");
-  }
-
-  if (
-    typeof content !== "string" ||
-    !content.trim()
-  ) {
-    console.error(
-      "Vision AI returned empty content:"
-    );
-
-    console.error(
-      JSON.stringify(
-        choice,
-        null,
-        2
-      )
-    );
-
-    throw new Error(
-      "Vision AI returned an empty response."
-    );
-  }
-
-  console.log(
-    "Vision AI raw response received."
-  );
-
-  return parseVisionResponse(content);
 }
 
 function parseVisionResponse(content) {
   let cleaned = content.trim();
 
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
+  // Remove optional Markdown code fences.
+  cleaned = cleaned
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+
+  // Handle models that include extra text around the JSON object.
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
   }
 
   try {
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      throw new Error("Expected a JSON object.");
+    }
+
+    return parsed;
   } catch (error) {
-    console.error(
-      "Could not parse Vision AI JSON."
-    );
-
-    console.error(
-      "Raw Vision AI response:"
-    );
-
-    console.error(content);
+    console.error("Could not parse Vision AI JSON:", error.message);
+    console.error("Raw Vision AI response:", content);
 
     throw new Error(
-      "Vision AI returned an invalid response format."
+      "Vision AI returned an invalid response format. Please try again."
     );
   }
 }
